@@ -18,6 +18,7 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 		var completionChunk models.CompletionChunk
 		fullText := ""
 		previousText := ""
+		finishReason := ""
 		lastSourceAttributions := []browsercontroller.SourceAttributions{}
 		for {
 			select {
@@ -94,9 +95,12 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 
 					case 2:
 						message := lastArgument.Messages[len(lastArgument.Messages)-1]
+
 						switch message.ContentOrigin {
-						case browsercontroller.JailBreakClassifier:
-							textDelta += "\n" + message.Text
+						case browsercontroller.JailBreakClassifier, browsercontroller.Aplology:
+							finishReason = string(message.ContentOrigin)
+
+							textDelta += "\n\n" + message.Text
 
 							if message.HiddenText != "" && message.Text != message.HiddenText {
 								if message.Text != "" {
@@ -104,6 +108,8 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 								}
 								textDelta += fmt.Sprintf("\n*%s*", message.HiddenText)
 							}
+
+							textDelta += fmt.Sprintf("\n*Finish-Reason: %s*", finishReason)
 						}
 					}
 
@@ -120,6 +126,7 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 								Delta: models.Message{
 									Content: textDelta,
 								},
+								FinishReason: finishReason,
 							},
 						},
 					}
