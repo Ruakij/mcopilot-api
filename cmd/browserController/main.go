@@ -232,7 +232,7 @@ func getNewReadyPage() (page *rod.Page, err error) {
 	}
 
 	//page.Navigate(targetUrl)
-	page.MustWaitLoad()
+	page.MustWaitStable()
 
 	if needsLogin(page) {
 		initiateLogin(page)
