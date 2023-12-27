@@ -61,7 +61,7 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 									if message.Text != "" {
 										text += "\n"
 									}
-									text += fmt.Sprintf("\n*%s*", message.HiddenText)
+									text += fmt.Sprintf("\n*%s*\n", message.HiddenText)
 								}
 							}
 
@@ -69,7 +69,6 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 								lastSourceAttributions = message.SourceAttributions
 							}
 
-							
 							//}
 
 							fmt.Println(text)
