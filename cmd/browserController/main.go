@@ -169,13 +169,13 @@ func handleWorkItem(page *rod.Page, work WorkItem) error {
 	`)
 	//inputElement.MustInput(work.input)
 
-	time.Sleep(100 * time.Millisecond)
-
 	sendBtn, err := ElementImmediateRecursive(page, ".submit button")
 	if err != nil {
 		return err
 	}
-	sendBtn.Eval("() => this.click()")
+	work.Page.Activate()
+	time.Sleep(time.Millisecond * 50)
+	sendBtn.MustEval("() => this.click()")
 
 	// Wait max 5s for stream to start
 	streamStarted := false
