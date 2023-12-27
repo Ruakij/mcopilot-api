@@ -20,8 +20,8 @@ import (
 )
 
 type LoginData struct {
-	Email string
-	Password string
+	Email      string
+	Password   string
 	TotpSecret string
 }
 
