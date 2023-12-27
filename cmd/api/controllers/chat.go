@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/models"
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/service"
@@ -51,6 +52,9 @@ func (co ChatController) postCompletions(c *gin.Context) {
 		}
 	} else {
 		result := <-resultChan
+		if result.ID == ""{
+			c.AbortWithError(500, fmt.Errorf("no data"))
+		}
 		c.JSON(200, result)
 
 		cancel()
