@@ -374,7 +374,6 @@ func initiateLogin(page *rod.Page) (err error) {
 	return
 }
 
-
 func GetFirstNotEquals(pages rod.Pages, page *rod.Page) *rod.Page {
 	for _, p := range pages {
 		if p != page {
