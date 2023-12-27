@@ -38,11 +38,9 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 							//for _, message := range lastArgument.Messages {
 							// Skip message types we dont want to return
 							switch message.MessageType {
-							case browsercontroller.BingChatMessageType(browsercontroller.InternalSearchResult):
-								continue
-							case browsercontroller.BingChatMessageType(browsercontroller.AdsQuery):
-								continue
-							case browsercontroller.BingChatMessageType(browsercontroller.InternalLoaderMessage):
+							case browsercontroller.BingChatMessageType(browsercontroller.InternalSearchResult),
+								browsercontroller.BingChatMessageType(browsercontroller.AdsQuery),
+								browsercontroller.BingChatMessageType(browsercontroller.InternalLoaderMessage):
 								continue
 							}
 
