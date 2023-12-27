@@ -40,7 +40,7 @@ type BingChatContentOriginType string
 
 const (
 	Unknown             BingChatContentOriginType = ""
-	Aplology            BingChatContentOriginType = "Aplology"
+	Aplology            BingChatContentOriginType = "Apology"
 	JailBreakClassifier BingChatContentOriginType = "JailBreakClassifier"
 )
 
