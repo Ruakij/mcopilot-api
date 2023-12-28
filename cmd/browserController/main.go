@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,50 +27,64 @@ type LoginData struct {
 }
 
 var loginData *LoginData
-func Setup(setupLoginData *LoginData) (err error) {
-	loginData = setupLoginData
 
-	err = setupRod()
+var BASE_URL string
+
+var PutImageHook func(string, []byte)
+
+func Setup(setupLoginData *LoginData, workerCount int, browserDataDir string, baseUrl string, putImageHook func(string, []byte)) (err error) {
+	loginData = setupLoginData
+	BASE_URL = baseUrl
+	PutImageHook = putImageHook
+
+	err = setupRod(browserDataDir)
 	if err != nil {
 		return
 	}
 
-	go processRequests()
+	for i := 0; i < workerCount; i++ {
+		go processRequests()
+	}
 
 	return
 }
 
 type WorkItem struct {
-	context      context.Context
-	input        string
-	outputStream chan<- BingChatResponse
+	Page         *rod.Page
+	Context      context.Context
+	Input        string
+	OutputStream chan<- BingChatResponse
 }
 
-var workQueue chan WorkItem = make(chan WorkItem)
+var workQueue chan *WorkItem = make(chan *WorkItem)
 
 // Place request into queue, blocks until work is processing
-func ProcessChatRequest(context context.Context, text string, streamChan chan<- BingChatResponse) {
-	work := WorkItem{
-		context:      context,
-		input:        text,
-		outputStream: streamChan,
+func ProcessChatRequestWithPage(context context.Context, page *rod.Page, text string, streamChan chan<- BingChatResponse) {
+	work := &WorkItem{
+		Page:         page,
+		Context:      context,
+		Input:        text,
+		OutputStream: streamChan,
 	}
 
+	workQueue <- work
+}
+func ProcessChatRequest(work *WorkItem) {
 	workQueue <- work
 }
 
 var browser *rod.Browser
 
-func setupRod() (err error) {
+func setupRod(browserDataDir string) (err error) {
 	// Connect to the WebDriver instance running locally.
 
-	launcher, err := launcher.New().
-		//Headless(false).
-		Launch()
+	launcher := launcher.New()
+	launcher.UserDataDir(browserDataDir)
+	curl, err := launcher.Launch()
 	if err != nil {
 		return err
 	}
-	browser = rod.New().ControlURL(launcher)
+	browser = rod.New().ControlURL(curl)
 	err = browser.Connect()
 	if err != nil {
 		return err
@@ -95,22 +110,29 @@ func setupRod() (err error) {
 	return
 }
 
+func isChannelClosed(channel chan any) bool {
+	select {
+	case _, ok := <-channel:
+		return !ok
+	default:
+		return false
+	}
+}
+
 // handleWorkItem handles a single work item by sending the input to the page and receiving the output
-func handleWorkItem(page *rod.Page, work WorkItem) error {
-	defer page.Close()
+func handleWorkItem(work WorkItem) error {
+	page := work.Page
 
 	inputElement, err := ElementImmediateRecursive(page, "#searchbox")
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("Ready!")
-	fmt.Printf("Got request %s\n", work.input)
+	waitChan := make(chan BingChatMessageType)
+	waitCloseChan := make(chan interface{})
 
-	waitChan := make(chan string)
-
+	var followUpReason BingChatMessageType = Message
 	go page.EachEvent(func(e *proto.NetworkWebSocketCreated) {
-		fmt.Println("created", e.URL)
 		waitChan <- ""
 	}, func(e *proto.NetworkWebSocketFrameReceived) {
 		//if e.Response.Opcode != 1 { return }
@@ -119,8 +141,6 @@ func handleWorkItem(page *rod.Page, work WorkItem) error {
 			if len(payload) == 0 {
 				continue
 			}
-
-			fmt.Println("\n", payload)
 
 			var bingChatResponse BingChatResponse
 			err := json.Unmarshal([]byte(payload), &bingChatResponse)
@@ -132,7 +152,10 @@ func handleWorkItem(page *rod.Page, work WorkItem) error {
 			switch bingChatResponse.Type {
 			case 1:
 				if len(bingChatResponse.Arguments) > 0 && len(bingChatResponse.Arguments[len(bingChatResponse.Arguments)-1].Messages) > 0 {
-					work.outputStream <- bingChatResponse
+					if isChannelClosed(waitCloseChan) {
+						return
+					}
+					work.OutputStream <- bingChatResponse
 				}
 			case 2:
 				var bingChatResponseSummary BingChatResponseSummary
@@ -142,21 +165,170 @@ func handleWorkItem(page *rod.Page, work WorkItem) error {
 				}
 
 				// Enter summary-data to stream
-				work.outputStream <- BingChatResponse{
+				if isChannelClosed(waitCloseChan) {
+					return
+				}
+				work.OutputStream <- BingChatResponse{
 					Type:      bingChatResponseSummary.Type,
 					Arguments: []BingChatResponseArgument{bingChatResponseSummary.Item},
 				}
 
+				// Check for follow-ups
+				for _, message := range bingChatResponseSummary.Item.Messages {
+					switch message.MessageType {
+					case GenerateContentQuery:
+						followUpReason = message.MessageType
+					}
+				}
+
 				// Tell others stream is over
-				waitChan <- ""
+				waitChan <- followUpReason
 			}
 		}
 	}, func(e *proto.NetworkWebSocketClosed) {
-		waitChan <- ""
+		waitChan <- followUpReason
 	})()
 
+	// Hijack for catching additional requests
+	hijackRouter := page.HijackRequests()
+	imageResponses := []BingChatImageResponseMetadata{}
+	imageCountSeen := 0
+	hijackRouter.MustAdd("https://th.bing.com/th/id/*", func(ctx *rod.Hijack) {
+		ctx.MustLoadResponse()
+
+		if ctx.Request.Method() != "GET" {
+			return
+		}
+
+		// Extract image-id from url
+		UrlData := regexp.MustCompile(`\/([^\/]+?)($|\?)`).FindStringSubmatch(ctx.Request.URL().Path)
+		ThumbnailId := UrlData[1]
+		/*var imageMetadata BingChatImageResponseMetadata
+		for _, imageResponse := range imageResponses {
+			if imageResponse.ThumbnailInfo[0].ThumbnailId == ThumbnailId {
+				imageMetadata = imageResponse
+				break
+			}
+		}*/
+
+		//ctx.Request.URL().Query().Del("")
+
+		imageData := ctx.Response.Payload().Body
+
+		if len(imageData) > 0 {
+			// Store data
+			PutImageHook(ThumbnailId, imageData)
+
+			// Build fake response to display image
+			work.OutputStream <- BingChatResponse{
+				Type: 1,
+				Arguments: []BingChatResponseArgument{
+					{
+						Messages: []BingChatResponseMessage{
+							{
+								MessageType: CustomMessage,
+								Author:      "bot",
+								Text:        fmt.Sprintf("![](%s/v1/images/%s) ", BASE_URL, ThumbnailId),
+							},
+						},
+					},
+				},
+			}
+		}
+
+		imageCountSeen++
+		if len(imageResponses) == imageCountSeen {
+			waitChan <- ""
+		}
+	})
+	hijackRouter.MustAdd("https://copilot.microsoft.com/images/create/async/results*", func(ctx *rod.Hijack) {
+		ctx.MustLoadResponse()
+		responseBody := ctx.Response.Payload().Body
+		if len(responseBody) == 0 {
+			return
+		}
+		responseBodyStr := string(responseBody)
+
+		// Extract image-info
+		imageDataAll := regexp.MustCompile(` ?m="(\{.+\})"`).FindAllStringSubmatch(responseBodyStr, -1)
+		for _, imageDataSlice := range imageDataAll {
+			imageData := imageDataSlice[1]
+			imageData = strings.ReplaceAll(imageData, "&quot;", `"`)
+			imageData = strings.ReplaceAll(imageData, "&amp;", `&`)
+			imageData = strings.ReplaceAll(imageData, `\"`, `"`)
+			imageData = regexp.MustCompile(`"CustomData":\s*"(\{.+?\})"`).ReplaceAllString(imageData, `"CustomData": $1`)
+
+			var metadata BingChatImageResponseMetadata
+			err := json.Unmarshal([]byte(imageData), &metadata)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+
+			imageResponses = append(imageResponses, metadata)
+		}
+
+		responseBodyStr = regexp.MustCompile(`w=\d+(&amp;)?`).ReplaceAllString(responseBodyStr, "")
+		responseBodyStr = regexp.MustCompile(`h=\d+(&amp;)?`).ReplaceAllString(responseBodyStr, "")
+		responseBodyStr = regexp.MustCompile(`c=\d+(&amp;)?`).ReplaceAllString(responseBodyStr, "")
+		//ctx.Response = ctx.Response.SetBody(responseBodyStr)
+
+		if len(imageResponses) > 0 {
+			work.OutputStream <- BingChatResponse{
+				Type: 1,
+				Arguments: []BingChatResponseArgument{
+					{
+						Messages: []BingChatResponseMessage{
+							{
+								MessageType: CustomMessage,
+								Author:      "bot",
+								Text:        "\n\nResult:\n",
+							},
+						},
+					},
+				},
+			}
+		} else {
+			work.OutputStream <- BingChatResponse{
+				Type: 1,
+				Arguments: []BingChatResponseArgument{
+					{
+						Messages: []BingChatResponseMessage{
+							{
+								MessageType: CustomMessage,
+								Author:      "bot",
+								Text:        "\n\n[SYSTEM] Mhh.. something went wrong.",
+							},
+						},
+					},
+				},
+			}
+			waitChan <- ""
+		}
+
+		time.Sleep(time.Second * 10)
+		if !isChannelClosed(waitCloseChan) {
+			work.OutputStream <- BingChatResponse{
+				Type: 1,
+				Arguments: []BingChatResponseArgument{
+					{
+						Messages: []BingChatResponseMessage{
+							{
+								MessageType: CustomMessage,
+								Author:      "bot",
+								Text:        "\n\n[SYSTEM] Mhh.. that took too long.",
+							},
+						},
+					},
+				},
+			}
+			waitChan <- ""
+		}
+	})
+	go hijackRouter.Run()
+
 	// Type in
-	inputElement.Eval("(input) => this.value = input", work.input)
+	inputElement.Eval("(input) => this.value = input", work.Input)
 	// Trigger input event
 	inputElement.Eval(` () => {
 		var event = new Event('input', {
@@ -177,45 +349,68 @@ func handleWorkItem(page *rod.Page, work WorkItem) error {
 	time.Sleep(time.Millisecond * 50)
 	sendBtn.MustEval("() => this.click()")
 
-	// Wait max 5s for stream to start
+	// Wait for stream to start
 	streamStarted := false
 	select {
 	case <-waitChan:
 		streamStarted = true
 		fmt.Println("Stream started")
-	case <-time.After(time.Second * 5):
+	case <-time.After(time.Second * 10):
 		if !streamStarted {
-			fmt.Println("Stream not started after 5s")
-			close(work.outputStream)
+			fmt.Println("Stream not started after 10s")
+			close(waitCloseChan)
+			close(work.OutputStream)
 			return nil
 		}
-	case <-work.context.Done():
+	case <-work.Context.Done():
 		// Request was cancelled
-		close(work.outputStream)
+		close(waitCloseChan)
+		work.Page.Close() // TODO: Properly cancel BingChat
+		close(work.OutputStream)
 		return nil
 	}
 
-	select {
-	case <-waitChan:
-		close(work.outputStream)
-		return nil
-	case <-work.context.Done():
-		close(work.outputStream)
-		return nil
+	for !isChannelClosed(waitCloseChan) {
+		select {
+		case followUpReason := <-waitChan:
+			switch followUpReason {
+			case GenerateContentQuery:
+				// Dont stop yet as more data will be sent from other locations
+				continue
+			}
+
+			close(waitCloseChan)
+			close(work.OutputStream)
+		case <-work.Context.Done():
+			// Request was cancelled
+			close(waitCloseChan)
+			work.Page.Close() // TODO: Properly cancel BingChat
+			close(work.OutputStream)
+		}
 	}
+	hijackRouter.Stop()
+	return nil
 }
 
 // processRequests processes work items from the work queue
 func processRequests() {
+	var curPage *rod.Page
 	for {
-		page, err := getNewReadyPage()
-		if err != nil {
-			time.Sleep(30 * time.Second)
-			continue
+		for curPage == nil {
+			curPage, _ = getNewReadyPage()
+			if curPage == nil {
+				time.Sleep(time.Second * 30)
+			}
+		}
+		fmt.Println("Ready!")
+
+		var work *WorkItem = <-workQueue
+		if work.Page == nil {
+			work.Page = curPage
+			curPage = nil
 		}
 
-		var work WorkItem = <-workQueue
-		err = handleWorkItem(page, work)
+		err := handleWorkItem(*work)
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -230,6 +425,38 @@ func getNewReadyPage() (page *rod.Page, err error) {
 	if err != nil {
 		return
 	}
+
+	page.MustEvaluate(&rod.EvalOptions{
+		JS: `() => {
+		function overrideFocusDetection() {
+			// Store the original methods in variables
+			var originalHidden = document.hidden;
+			var originalVisibilityState = document.visibilityState;
+			var originalVisibilityChange = document.onvisibilitychange;
+			var originalBlur = window.onblur;
+			var originalFocus = window.onfocus;
+
+			// Define new methods that always return true for focus
+			document.hidden = false;
+			document.visibilityState = "visible";
+			document.onvisibilitychange = function() {};
+			window.onblur = function() {};
+			window.onfocus = function() {};
+
+			// Return a function that restores the original methods
+			return function restoreFocusDetection() {
+				document.hidden = originalHidden;
+				document.visibilityState = originalVisibilityState;
+				document.onvisibilitychange = originalVisibilityChange;
+				window.onblur = originalBlur;
+				window.onfocus = originalFocus;
+			};
+		}
+
+		// Call the function and store the restore function in a variable
+		var restore = overrideFocusDetection();
+	}`,
+	})
 
 	//page.Navigate(targetUrl)
 	page.MustWaitLoad()
@@ -260,6 +487,12 @@ func getNewReadyPage() (page *rod.Page, err error) {
 
 	time.Sleep(time.Duration(1) * time.Second)
 	inputElement.Eval("() => this.removeAttribute('maxlength')")
+
+	// Setup Copilot-settings
+	page.MustEval(`() => {
+		CIB.config.messaging.enableSyntheticStreaming = false;
+		CIB.config.messaging.streamSyntheticTextResponses = false;
+	}`)
 
 	return
 }

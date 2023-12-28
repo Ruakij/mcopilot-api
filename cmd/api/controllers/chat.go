@@ -11,10 +11,12 @@ import (
 
 type ChatController struct{}
 
-func (co ChatController) RegisterRoutes(router *gin.RouterGroup) {
+func (co ChatController) RegisterRoutes(router *gin.RouterGroup) *gin.RouterGroup {
 	router = router.Group("/chat")
 
 	router.POST("/completions", co.postCompletions)
+
+	return router
 }
 
 func (co ChatController) postCompletions(c *gin.Context) {
@@ -29,7 +31,7 @@ func (co ChatController) postCompletions(c *gin.Context) {
 
 	context, cancel := context.WithCancel(context.Background())
 
-	ChatService.ProcessChatRequest(context, request, dataChan, resultChan)
+	service.ProcessChatRequest(context, request, dataChan, resultChan)
 
 	if request.Stream {
 		for {
@@ -44,7 +46,7 @@ func (co ChatController) postCompletions(c *gin.Context) {
 				} else {
 					c.SSEvent("", "[DONE]")
 					c.Writer.Flush()
-					
+
 					cancel()
 					return
 				}
@@ -52,7 +54,7 @@ func (co ChatController) postCompletions(c *gin.Context) {
 		}
 	} else {
 		result := <-resultChan
-		if result.ID == ""{
+		if result.ID == "" {
 			c.AbortWithError(500, fmt.Errorf("no data"))
 		}
 		c.JSON(200, result)

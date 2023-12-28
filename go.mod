@@ -46,4 +46,5 @@ require (
 	github.com/go-rod/stealth v0.4.9
 	github.com/pquerna/otp v1.4.0
 	github.com/spf13/pflag v1.0.5
+	github.com/vence722/gin-middleware-bearer-token v1.1.0
 )

@@ -4,11 +4,13 @@ type BingChatMessageType string
 
 const (
 	Message               BingChatMessageType = ""
+	CustomMessage         BingChatMessageType = "CustomMessage"
 	Disengaged            BingChatMessageType = "Disengaged"
 	InternalSearchQuery   BingChatMessageType = "InternalSearchQuery"
 	InternalSearchResult  BingChatMessageType = "InternalSearchResult"
 	AdsQuery              BingChatMessageType = "AdsQuery"
 	InternalLoaderMessage BingChatMessageType = "InternalLoaderMessage"
+	GenerateContentQuery  BingChatMessageType = "GenerateContentQuery"
 )
 
 type SourceAttributions struct {
@@ -42,9 +44,25 @@ const (
 	Unknown             BingChatContentOriginType = ""
 	Aplology            BingChatContentOriginType = "Apology"
 	JailBreakClassifier BingChatContentOriginType = "JailBreakClassifier"
+	DeepLeo             BingChatContentOriginType = "DeepLeo"
 )
 
 type BingChatResponseSummary struct {
 	Type uint8                    `json:"type"`
 	Item BingChatResponseArgument `json:"item"`
+}
+
+type BingChatImageResponseMetadata struct {
+	Title         string                                       `json:"Title"`
+	ThumbnailInfo []BingChatImageResponseMetadataThumbnailInfo `json:"ThumbnailInfo"`
+	CustomData    BingChatImageResponseMetadataCustomData      `json:"CustomData"`
+	ContentId     string                                       `json:"ContentId"`
+}
+
+type BingChatImageResponseMetadataThumbnailInfo struct {
+	ThumbnailId string
+}
+
+type BingChatImageResponseMetadataCustomData struct {
+	MediaUrl string `json:"MediaUrl"`
 }

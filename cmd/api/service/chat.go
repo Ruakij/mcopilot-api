@@ -1,18 +1,106 @@
-package ChatService
+package service
 
 import (
 	"context"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/models"
 	browsercontroller "git.ruekov.eu/ruakij/mcopilot-api/cmd/browserController"
+	"git.ruekov.eu/ruakij/mcopilot-api/lib/advancedmap"
+	"github.com/go-rod/rod"
 )
 
-func ProcessChatRequest(context context.Context, request models.ChatRequest, events chan<- models.CompletionChunk, resultChan chan<- models.Completion) {
+var sessions = advancedmap.NewAdvancedMap[string, *rod.Page](time.Minute*30, 10)
+
+func init() {
+	sessions.SetRemoveHook(func(key string, item advancedmap.Item[*rod.Page]) {
+		item.Data.MustClose()
+		item.Data.Close()
+	})
+}
+
+func filterMessage(message models.Message) models.Message {
+	// Filter some aspects to reduce halucinations and token-length
+	switch message.Role {
+	case "assistant":
+		message.Content = regexp.MustCompile(`(?s)\n\n\[src\d+\]: .+$`).ReplaceAllString(message.Content, "")
+		//message.Content = regexp.MustCompile(` ?\[\(\d+\)\]\[src\d+\]`).ReplaceAllString(message.Content, "")
+		message.Content = regexp.MustCompile(` ?\[(.+?)\]\[src\d+\]:.+(\n|$)`).ReplaceAllString(message.Content, "") // Might not be wanted?
+		message.Content = regexp.MustCompile(` ?\[(.+?)\]\[src\d+\]`).ReplaceAllString(message.Content, "")
+		message.Content = regexp.MustCompile(`^(- Search: .+\n\n)+`).ReplaceAllString(message.Content, "")
+		message.Content = regexp.MustCompile(`^\^\[\]\(BCN\)\n`).ReplaceAllString(message.Content, "")
+
+		// Generate replies cannot be used, simply remove them to make it work
+		if regexp.MustCompile(`^(- Generate: .+\n\n)+`).MatchString(message.Content) {
+			message.Content = ""
+		}
+	}
+
+	message.Content = strings.Trim(message.Content, "\n ")
+
+	return message
+}
+
+func extractFilteredMessageContents(messages []models.Message) []string {
+	messageContents := make([]string, 0, len(messages))
+
+	for _, message := range messages {
+		message = filterMessage(message)
+		if message.Content == "" {
+			continue
+		}
+		messageContents = append(messageContents, message.Content)
+	}
+
+	return messageContents
+}
+
+// ProcessChatRequestWithSession processes the chat request with a reuseable session
+func ProcessChatRequest(context context.Context, request models.ChatRequest, events chan<- models.CompletionChunk, resultChan chan<- models.Completion) error {
+	// Build message
+	messageContents := extractFilteredMessageContents(request.Messages)
+	messageContext := messageContents[:len(messageContents)-1]
+	messageContextKey := strings.Join(messageContext, "|")
+
 	returnChan := make(chan browsercontroller.BingChatResponse, 200)
 
+	// Get the chat session page for the request context
+
+	page, ok := sessions.Get(messageContextKey)
+	if ok {
+		// Test if still ok
+		_, err := page.Eval("() => console.log('ping from master')")
+		if err != nil {
+			sessions.Remove(messageContextKey)
+			page = nil
+		}
+	}
+
+	// Remember user-request in context after we checked it
+	messageContext = messageContents
+	var work *browsercontroller.WorkItem
+	if page != nil {
+		work = &browsercontroller.WorkItem{
+			Page:         page,
+			Context:      context,
+			Input:        request.Messages[len(request.Messages)-1].Content,
+			OutputStream: returnChan,
+		}
+	} else {
+		fullMessage := strings.Join(messageContents, "\n---\n")
+		work = &browsercontroller.WorkItem{
+			Page:         nil,
+			Context:      context,
+			Input:        fullMessage,
+			OutputStream: returnChan,
+		}
+	}
+	browsercontroller.ProcessChatRequest(work)
+
+	// The rest of the code is the same as ProcessChatRequest
 	var completion models.Completion
 	go func() {
 		var completionChunk models.CompletionChunk
@@ -23,6 +111,15 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 		for {
 			select {
 			case <-context.Done():
+				sessions.RemoveWithoutHooks(messageContextKey)
+				// Build new context
+				/*newMessage := filterMessage(models.Message{
+					Role:    "assistant",
+					Content: fullText,
+				})
+				messageContext = append(messageContext, newMessage.Content)
+				messageContextKey := strings.Join(messageContext, "|")
+				sessions.Put(messageContextKey, page)*/
 
 				return
 			case bingChatResponse, ok := <-returnChan:
@@ -54,6 +151,9 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 							case browsercontroller.InternalSearchQuery:
 								text += fmt.Sprintf("- Search: %s\n\n", message.HiddenText)
 
+							case browsercontroller.GenerateContentQuery:
+								text += fmt.Sprintf("- Generate: %s\n\n", message.Text)
+
 							default:
 								text += message.Text
 
@@ -71,8 +171,6 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 							}
 
 							//}
-
-							fmt.Println(text)
 
 							// Replace links to more-supported anchors
 							if regexp.MustCompile(`(\[\^\d+\^|\[\^\d+|\[\^|\[)$`).MatchString(text) ||
@@ -140,6 +238,11 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 						events <- completionChunk
 					}
 				} else {
+					/*if completionChunk.ID == "" {
+						resultChan <- models.Completion{}
+						return
+					}*/
+
 					// Send last stream
 					sourceText := ""
 					if len(lastSourceAttributions) > 0 {
@@ -154,33 +257,53 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 								Content: sourceText,
 							},
 							Index:        0,
-							FinishReason: "stop",
+							FinishReason: completionChunk.Choices[len(completionChunk.Choices)-1].FinishReason,
 						},
 					}
 
+					// Handle session-storage
+					switch completionChunk.Choices[len(completionChunk.Choices)-1].FinishReason {
+					case string(browsercontroller.Aplology), string(browsercontroller.JailBreakClassifier):
+						sessions.Remove(messageContextKey)
+
+					default:
+						// Build new context
+						newMessage := filterMessage(models.Message{
+							Role:    "assistant",
+							Content: fullText,
+						})
+						if newMessage.Content != "" {
+							sessions.RemoveWithoutHooks(messageContextKey)
+							messageContext = append(messageContext, newMessage.Content)
+							messageContextKey := strings.Join(messageContext, "|")
+							sessions.Put(messageContextKey, work.Page)
+						}
+					}
+
+					// Return last data
 					if request.Stream {
 						events <- completionChunk
-					}
-					close(events)
-
-					// Build completion
-					completion = models.Completion{
-						ID:      completionChunk.ID,
-						Object:  "chat.completion",
-						Created: 0,
-						Model:   completionChunk.Model,
-						Choices: []models.Choice{
-							{
-								Index: 0,
-								Message: models.Message{
-									Role:    "bot",
-									Content: fullText,
+						close(events)
+					} else {
+						// Build completion
+						completion = models.Completion{
+							ID:      completionChunk.ID,
+							Object:  "chat.completion",
+							Created: 0,
+							Model:   completionChunk.Model,
+							Choices: []models.Choice{
+								{
+									Index: 0,
+									Message: models.Message{
+										Role:    "bot",
+										Content: fullText,
+									},
+									FinishReason: "stop",
 								},
-								FinishReason: "stop",
 							},
-						},
+						}
+						resultChan <- completion
 					}
-					resultChan <- completion
 
 					return
 				}
@@ -188,23 +311,5 @@ func ProcessChatRequest(context context.Context, request models.ChatRequest, eve
 		}
 	}()
 
-	// Build message
-	messages := make([]string, 0, len(request.Messages))
-	for _, message := range request.Messages {
-		msgContent := message.Content
-
-		// Filter some aspects to reduce halucinations and token-length
-		switch message.Role{
-		case "assistant":
-			msgContent = regexp.MustCompile(`(?s)\n\n\[src\d+\]: https?:\/\/.+$`).ReplaceAllString(msgContent, "")
-			msgContent = regexp.MustCompile(` ?\[\(\d+\)\]\[src\d+\]`).ReplaceAllString(msgContent, "")
-			msgContent = regexp.MustCompile(`\[(.+)\]\[src\d+\]`).ReplaceAllString(msgContent, "$1")
-			msgContent = regexp.MustCompile(`(?s)^- Search: .+\n\n`).ReplaceAllString(msgContent, "")
-		}
-
-		messages = append(messages, strings.Trim(msgContent, "\r\n\t "))
-	}
-	fullMessage := strings.Join(messages, "\n---\n")
-
-	browsercontroller.ProcessChatRequest(context, fullMessage, returnChan)
+	return nil
 }
