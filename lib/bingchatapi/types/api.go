@@ -12,6 +12,11 @@ type WorkItem struct {
 	Context      context.Context
 	OutputStream chan<- []byte
 	Model        string
+	Options      Options
+}
+
+type Options struct {
+	SearchEnabled bool
 }
 
 type Api interface {

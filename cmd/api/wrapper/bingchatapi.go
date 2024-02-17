@@ -27,9 +27,15 @@ func (wrapper *BingChatWrapper) Init() {
 	wrapper.api.Init()
 }
 
-func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request models.ChatRequest, outputCh chan<- models.CompletionChunk) {
+func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request models.ChatRequest, outputCh chan<- models.CompletionChunk) (err error) {
 	logger.Info.Println("ProcessRequest")
 	apiOutputCh := make(chan []byte)
+
+	// Options
+	options, err := ParseOptions(request.Messages)
+	if err != nil {
+		return
+	}
 
 	// Build WorkItem
 	typesMessages := make([]types.Message, len(request.Messages))
@@ -42,6 +48,7 @@ func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request 
 		OutputStream: apiOutputCh,
 		Messages:     typesMessages,
 		Model:        request.Model,
+		Options:      options,
 	}
 
 	// Start api-processing
@@ -196,4 +203,25 @@ func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request 
 			}
 		}
 	}()
+
+	return
+}
+
+var (
+	optionSearchRegexp *regexp.Regexp = regexp.MustCompile(`(?i)(^|\n)/search (.+)$`)
+)
+
+func ParseOptions(messages []models.Message) (options types.Options, err error) {
+	for _, message := range messages {
+		if strings.EqualFold(message.Role, "system") {
+			match := optionSearchRegexp.FindStringSubmatch(message.Content)
+			if len(match) >= 3 {
+				options.SearchEnabled, err = strconv.ParseBool(match[2])
+				if err != nil {
+					return
+				}
+			}
+		}
+	}
+	return
 }

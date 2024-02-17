@@ -20,7 +20,10 @@ func NewChatService(bingChatApiWrapper *wrapper.BingChatWrapper) *ChatService {
 func (service *ChatService) ProcessChatRequestStream(context context.Context, request models.ChatRequest) (<-chan models.CompletionChunk, error) {
 	completionChunkCh := make(chan models.CompletionChunk)
 
-	service.bingChatApiWrapper.ProcessRequest(context, request, completionChunkCh)
+	err := service.bingChatApiWrapper.ProcessRequest(context, request, completionChunkCh)
+	if err != nil {
+		return nil, err
+	}
 
 	return completionChunkCh, nil
 }

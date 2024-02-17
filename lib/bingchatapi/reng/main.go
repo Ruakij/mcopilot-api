@@ -100,7 +100,7 @@ func (api RengApi) workerProcess() {
 	workItem.Messages[len(workItem.Messages)-1].Content = fmt.Sprintf("%s%s:\n%s", messageContext, workItem.Messages[len(workItem.Messages)-1].Role, workItem.Messages[len(workItem.Messages)-1].Content)
 	messageContext = ""
 
-	outputCh, err := api.stream_generate(workItem.Context, workItem.Messages[len(workItem.Messages)-1].Content, msgTone, nil, messageContext, "", api.Cookies, false, false)
+	outputCh, err := api.stream_generate(workItem.Context, workItem.Messages[len(workItem.Messages)-1].Content, msgTone, nil, messageContext, "", api.Cookies, workItem.Options.SearchEnabled, true)
 	if err != nil {
 		logger.Error.Printf("stream_generate failed: %s", err)
 		return
