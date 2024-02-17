@@ -135,8 +135,7 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 								}
 
 							case messagetype.InternalSearchQuery:
-								textDelta = fmt.Sprintf("- Search: `%s`\n", message.HiddenText)
-
+								textDelta = fmt.Sprintf("- Search: `%s`\n\n", message.HiddenText)
 							}
 
 							if textDelta != "" {
