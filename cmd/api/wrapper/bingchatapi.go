@@ -120,7 +120,7 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 								switch message.ContentOrigin {
 								case contentorigin.DeepLeo:
 									// Remove trailing newline from text. If its last, it wont be there, if its not, will be send again.
-									message.Text = strings.TrimRight(message.Text, "\t\r\n ")
+									message.Text = strings.TrimRight(message.Text, "\t\r\n")
 
 									if strings.HasPrefix(message.Text, textMsgBuffer) {
 										// When msg text starts with previous text, use diff
