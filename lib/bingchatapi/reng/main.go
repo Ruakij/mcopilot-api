@@ -93,11 +93,20 @@ func (api RengApi) workerProcess() {
 	// Build messageContext
 	messageContext := ""
 	for _, message := range workItem.Messages[:len(workItem.Messages)-1] {
-		messageContext += fmt.Sprintf("%s:\n%s\n---\n", message.Role, message.Content)
+		switch message.Role {
+		case "user":
+			messageContext += fmt.Sprintf("%s\n---\n", message.Content)
+
+		default:
+			messageContext += fmt.Sprintf("%s:\n%s\n---\n", message.Role, message.Content)
+		}
 	}
 
 	// TODO: messageContext doesnt work, so just put it to the front of messages
-	workItem.Messages[len(workItem.Messages)-1].Content = fmt.Sprintf("%s%s:\n%s", messageContext, workItem.Messages[len(workItem.Messages)-1].Role, workItem.Messages[len(workItem.Messages)-1].Content)
+	if messageContext != "" {
+		workItem.Messages[len(workItem.Messages)-1].Content = messageContext + workItem.Messages[len(workItem.Messages)-1].Content
+	}
+
 	messageContext = ""
 
 	outputCh, err := api.stream_generate(workItem.Context, workItem.Messages[len(workItem.Messages)-1].Content, msgTone, nil, messageContext, "", api.Cookies, workItem.Options.SearchEnabled, true)
