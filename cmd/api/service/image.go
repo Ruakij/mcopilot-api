@@ -47,9 +47,12 @@ func (service *ImageService) Init(path string) *ImageService {
 			}
 
 			// Check if the file was accessed within the time limit
-			if time.Since(info.ModTime()) <= service.ImageStore.TimeLimit {
+			remainingTime := service.ImageStore.TimeLimit - time.Since(info.ModTime())
+			if remainingTime > 0 {
 				// Store the file content with the file name as the key
-				service.ImageStore.Put(file.Name(), data)
+				item := service.ImageStore.Put(file.Name(), data)
+				// Set deadline
+				service.ImageStore.SetDeadline(file.Name(), &item, remainingTime)
 			}
 		}
 	}
