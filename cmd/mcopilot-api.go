@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/controllers"
+	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/logger"
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/service"
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/browserController"
 	"git.ruekov.eu/ruakij/mcopilot-api/lib/environmentchecks"
