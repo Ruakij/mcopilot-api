@@ -27,7 +27,7 @@ func (wrapper *BingChatWrapper) Init() {
 	wrapper.api.Init()
 }
 
-func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request models.ChatRequest, outputCh chan<- models.CompletionChunk) (err error) {
+func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context, request models.ChatRequest, outputCh chan<- models.CompletionChunk) (err error) {
 	logger.Info.Println("ProcessRequest")
 	apiOutputCh := make(chan []byte)
 
@@ -37,6 +37,8 @@ func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request 
 		return
 	}
 
+	wrapperContext, contextCancel := context.WithCancel(controllerContext)
+
 	// Build WorkItem
 	typesMessages := make([]types.Message, len(request.Messages))
 	for i, message := range request.Messages {
@@ -44,7 +46,7 @@ func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request 
 	}
 
 	workItem := types.WorkItem{
-		Context:      context,
+		Context:      wrapperContext,
 		OutputStream: apiOutputCh,
 		Messages:     typesMessages,
 		Model:        request.Model,
@@ -57,13 +59,14 @@ func (wrapper *BingChatWrapper) ProcessRequest(context context.Context, request 
 	// Start translation
 	go func() {
 		defer close(outputCh)
+		defer contextCancel()
 
 		textMsgBuffer := ""
 		responseHistory := make([]types.BingChatResponseNormal, 10)
 
 		for {
 			select {
-			case <-context.Done():
+			case <-controllerContext.Done():
 				return
 
 			case record, ok := <-apiOutputCh:
