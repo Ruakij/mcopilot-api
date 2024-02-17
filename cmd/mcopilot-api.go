@@ -26,6 +26,7 @@ var envDefaults = map[string]string{
 	"IMAGE_DIR":       "/data/images",
 
 	"AUTH_TOKEN": "MCOPILOT_API_SECRET_TOKEN",
+	"SESSION_SOFT_TIMEOUT": "30m",
 }
 
 func main() {
@@ -36,8 +37,13 @@ func main() {
 	}
 	environmentchecks.HandleDefaults(envDefaults)
 
+	sessionSoftTimeout, err := time.ParseDuration(os.Getenv("SESSION_SOFT_TIMEOUT"))
+	if err != nil {
+		logger.Error.Fatalf("Error parsing SESSION_SOFT_TIMEOUT: %s", err)
+	}
+
 	// Setup services
-	imageService := new(service.ImageService).Init(os.Getenv("IMAGE_DIR"))
+	imageService := new(service.ImageService).Init(os.Getenv("IMAGE_DIR"), sessionSoftTimeout)
 
 	// Setup browser
 	workerCount, err := strconv.Atoi(os.Getenv("WORKER_COUNT"))

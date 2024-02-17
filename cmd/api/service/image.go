@@ -15,8 +15,8 @@ type ImageService struct {
 var ImageServiceSingleton *ImageService
 
 // Init creates a new AdvancedMap with a 30-minute time limit and loads the files from the given path
-func (service *ImageService) Init(path string) *ImageService {
-	service.ImageStore = advancedmap.NewAdvancedMap[string, []byte](30*time.Minute, 0)
+func (service *ImageService) Init(path string, timeout time.Duration) *ImageService {
+	service.ImageStore = advancedmap.NewAdvancedMap[string, []byte](timeout, 0)
 
 	// Create the directory if it does not exist
 	err := os.MkdirAll(path, 0755)
