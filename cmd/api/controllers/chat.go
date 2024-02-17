@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/models"
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/service"
@@ -35,7 +34,13 @@ func (co ChatController) postCompletions(c *gin.Context) {
 	context, _ := context.WithCancel(c.Request.Context())
 
 	if request.Stream {
-		dataChan, _ := co.chatService.ProcessChatRequestStream(context, request)
+		dataChan, err := co.chatService.ProcessChatRequestStream(context, request)
+		if err != nil {
+			c.AbortWithStatusJSON(500, err.Error())
+			return
+		}
+		c.Status(200)
+
 		for {
 			select {
 			case <-context.Done():
@@ -53,8 +58,9 @@ func (co ChatController) postCompletions(c *gin.Context) {
 		}
 	} else {
 		result, err := co.chatService.ProcessChatRequest(context, request)
-		if err != nil || result.ID == "" {
-			c.AbortWithError(500, fmt.Errorf("no data"))
+		if err != nil {
+			c.AbortWithStatusJSON(500, err.Error())
+			return
 		}
 		c.JSON(200, result)
 	}
