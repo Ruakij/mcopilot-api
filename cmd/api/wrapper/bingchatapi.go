@@ -62,7 +62,7 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 		defer contextCancel()
 
 		textMsgBuffer := ""
-		responseHistory := make([]types.BingChatResponseNormal, 10)
+		responseHistory := make([]types.BingChatResponseNormal, 0, 20)
 
 		for {
 			select {
