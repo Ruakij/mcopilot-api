@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"git.ruekov.eu/ruakij/mcopilot-api/cmd/api/logger"
