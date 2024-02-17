@@ -62,7 +62,7 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 		defer contextCancel()
 
 		textMsgBuffer := ""
-		responseHistory := make([]types.BingChatResponseNormal, 0, 20)
+		responseNormalHistory := make([]types.BingChatResponseNormal, 0, 20)
 
 		for {
 			select {
@@ -91,7 +91,7 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 						continue
 					}
 
-					responseHistory = append(responseHistory, bingChatResponse)
+					responseNormalHistory = append(responseNormalHistory, bingChatResponse)
 
 					choiceIndex := uint(0)
 					for _, argument := range bingChatResponse.Arguments {
@@ -101,8 +101,8 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 							switch message.MessageType {
 							case messagetype.Message:
 								// Check preconditions
-								if len(responseHistory) > 1 {
-									previousMessage := responseHistory[len(responseHistory)-2]
+								if len(responseNormalHistory) > 1 {
+									previousMessage := responseNormalHistory[len(responseNormalHistory)-2]
 									if len(previousMessage.Arguments) > 0 {
 										lastArgumentFromPreviousMessage := previousMessage.Arguments[len(previousMessage.Arguments)-1]
 										if len(lastArgumentFromPreviousMessage.Messages) > 0 {
