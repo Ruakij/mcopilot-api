@@ -64,17 +64,17 @@ func (item *Item[V]) Expired() bool {
 	return item.deadline.Before(time.Now())
 }
 
-func (m *AdvancedMap[K, V]) setDeadline(key K, item *Item[V]) {
-	if m.TimeLimit > 0 {
-		item.deadline = time.Now().Add(m.TimeLimit)
+func (m *AdvancedMap[K, V]) SetDeadline(key K, item *Item[V], deadline time.Duration) {
+	if deadline > 0 {
+		item.deadline = time.Now().Add(deadline)
 		if item.deadlineTimer == nil {
 			// Start timer
-			item.deadlineTimer = time.AfterFunc(m.TimeLimit, func() {
+			item.deadlineTimer = time.AfterFunc(deadline, func() {
 				m.Remove(key)
 			})
 		} else {
 			// Reset timer
-			item.deadlineTimer.Reset(m.TimeLimit)
+			item.deadlineTimer.Reset(deadline)
 		}
 	}
 }
@@ -114,26 +114,28 @@ func (m *AdvancedMap[K, V]) Get(key K) (V, bool) {
 	}
 
 	// Reset deadline since it got accessed
-	m.setDeadline(key, &item)
+	m.SetDeadline(key, &item, m.TimeLimit)
 
 	return item.Data, ok
 }
 
-func (m *AdvancedMap[K, V]) Put(key K, value V) {
+func (m *AdvancedMap[K, V]) Put(key K, value V) Item[V] {
 	m.dataMutex.Lock()
 	defer m.dataMutex.Unlock()
 
 	item := Item[V]{Data: value}
-	m.setDeadline(key, &item)
+	m.SetDeadline(key, &item, m.TimeLimit)
 	m.data[key] = item
 
 	if m.putHook != nil {
 		m.putHook(key, item)
 	}
 
-	if len(m.data) > int(m.maxSize) {
+	if m.maxSize > 0 && uint(len(m.data)) > m.maxSize {
 		m.removeOldest()
 	}
+
+	return item
 }
 
 func (m *AdvancedMap[K, V]) Remove(key K) {

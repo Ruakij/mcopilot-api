@@ -9,11 +9,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type ChatController struct{}
+type ChatController struct {
+	chatService *service.ChatService
+}
+
+func NewChatController(chatService *service.ChatService) *ChatController {
+	return &ChatController{
+		chatService: chatService,
+	}
+}
 
 func (co ChatController) RegisterRoutes(router *gin.RouterGroup) *gin.RouterGroup {
-	router = router.Group("/chat")
-
 	router.POST("/completions", co.postCompletions)
 
 	return router
@@ -26,18 +32,13 @@ func (co ChatController) postCompletions(c *gin.Context) {
 		return
 	}
 
-	dataChan := make(chan models.CompletionChunk, 200)
-	resultChan := make(chan models.Completion)
-
-	context, cancel := context.WithCancel(context.Background())
-
-	service.ProcessChatRequest(context, request, dataChan, resultChan)
+	context, _ := context.WithCancel(c.Request.Context())
 
 	if request.Stream {
+		dataChan, _ := co.chatService.ProcessChatRequestStream(context, request)
 		for {
 			select {
-			case <-c.Request.Context().Done():
-				cancel()
+			case <-context.Done():
 				return
 			case completionChunk, ok := <-dataChan:
 				if ok {
@@ -46,19 +47,15 @@ func (co ChatController) postCompletions(c *gin.Context) {
 				} else {
 					c.SSEvent("", "[DONE]")
 					c.Writer.Flush()
-
-					cancel()
 					return
 				}
 			}
 		}
 	} else {
-		result := <-resultChan
-		if result.ID == "" {
+		result, err := co.chatService.ProcessChatRequest(context, request)
+		if err != nil || result.ID == "" {
 			c.AbortWithError(500, fmt.Errorf("no data"))
 		}
 		c.JSON(200, result)
-
-		cancel()
 	}
 }
