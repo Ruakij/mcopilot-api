@@ -293,6 +293,7 @@ func (api RengApi) stream_generate(
 
 	go func() {
 		defer close(output)
+		defer wss.Close()
 
 		// Start reading
 		logger.Info.Println("Start reading..")
