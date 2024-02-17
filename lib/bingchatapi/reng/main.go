@@ -279,7 +279,7 @@ func (api RengApi) stream_generate(
 
 	// Send the message with the prompt, tone, context, web_search and gpt4_turbo
 	message := create_message(conversation, prompt, tone, contextMsg, web_search, gpt4_turbo)
-	logger.Info.Printf("Sending message request.. count=%d bytes: %s\n", len(message), string(message))
+	logger.Info.Printf("Sending message request.. count=%d\n", len(message))
 	err = wss.WriteMessage(websocket.TextMessage, message)
 	if err != nil {
 		close(output)
