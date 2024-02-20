@@ -160,18 +160,20 @@ func main() {
 	// Add a new timer to close and reopen the page after 60 minutes
 	if sessionHardTimeout > 0 {
 		pageReopenTimer = time.AfterFunc(sessionHardTimeout, func() {
-			pageMutex.Lock()
-			defer pageMutex.Unlock()
-
 			if page != nil {
-				logger.Info.Printf("Closing and reopening the page after %s minutes\n", sessionHardTimeout)
-				page.Close()
+				logger.Info.Printf("Opening a new page after %s minutes\n", sessionHardTimeout)
 
-				page, err = browser.GetNewReadyPage()
+				newPage, err := browser.GetNewReadyPage()
 				if err != nil {
 					logger.Error.Fatalf("Failed getting page: %s", err.Error())
 				}
+
+				pageMutex.Lock()
+				logger.Info.Println("Setting new page as active and closing old page")
+				page.Close()
+				page = newPage
 				pageReopenTimer.Reset(sessionHardTimeout)
+				pageMutex.Unlock()
 			}
 		})
 	}
