@@ -131,6 +131,14 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 										// TODO: This shouldnt really happen and will mess things up if happens more than once! Might aswell go for efficiency and only store lastMsgTextLength?
 										textDelta += message.Text
 									}
+
+									var forceWait bool
+									newTextDelta, forceWait := DeepLeoFormatting(textDelta)
+									textDelta = newTextDelta
+									if forceWait {
+										continue
+									}
+
 									textMsgBuffer = message.Text
 
 								default:
@@ -170,21 +178,39 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 						continue
 					}
 
+					var chunk models.CompletionChunk
 					switch bingChatResponse.Item.Result.Value {
 					case types.Success:
-						outputCh <- models.CompletionChunk{
+						// Construct source-Attributes for markdown
+						var delta *models.Message
+						if len(bingChatResponse.Item.Messages) > 0 {
+							lastMessage := bingChatResponse.Item.Messages[len(bingChatResponse.Item.Messages)-1]
+
+							textDelta := "\n"
+							for i, sourceAttribution := range lastMessage.SourceAttributions {
+								textDelta += fmt.Sprintf("\n[src%d]: %s", i+1, sourceAttribution.SeeMoreUrl)
+							}
+
+							delta = &models.Message{
+								Role:    lastMessage.Author,
+								Content: textDelta,
+							}
+						}
+
+						chunk = models.CompletionChunk{
 							ID:     bingChatResponse.Item.RequestId,
 							Object: "chat.completion.chunk",
 							Model:  workItem.Model,
 							Choices: []models.CompletionChunkChoice{
 								{
 									FinishReason: "stop",
+									Delta:        *delta,
 								},
 							},
 						}
 
 					default:
-						outputCh <- models.CompletionChunk{
+						chunk = models.CompletionChunk{
 							ID:     bingChatResponse.Item.RequestId,
 							Object: "chat.completion.chunk",
 							Model:  workItem.Model,
@@ -199,6 +225,8 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 							},
 						}
 					}
+
+					outputCh <- chunk
 
 				case 3:
 					// End
@@ -235,4 +263,58 @@ func ParseOptions(messages []models.Message) (options types.Options, newMessages
 		}
 	}
 	return
+}
+
+// Replace links to more-supported anchors
+/*
+	if regexp.MustCompile(`(\[\^\d+\^|\[\^\d+|\[\^|\[)$`).MatchString(text) ||
+		regexp.MustCompile(`(\]\(\^(\d+)\^|\]\(\^(\d+)|\]\(\^|\]\(|\])$`).MatchString(text) {
+		continue
+	}
+	text = regexp.MustCompile(` ?\[\^(\d+)\^\]`).ReplaceAllString(text, " [($1)][src$1]")
+	text = regexp.MustCompile(`\]\(\^(\d+)\^\)`).ReplaceAllString(text, "][src$1]")
+*/
+type FormattingRule struct {
+	name           string
+	forceWaitMatch *regexp.Regexp
+	replace        FormattingReplaceRule
+}
+type FormattingReplaceRule struct {
+	match   *regexp.Regexp
+	replace string
+}
+
+var (
+	formattingRules = []FormattingRule{
+		{
+			name:           "Link-Ref",
+			forceWaitMatch: regexp.MustCompile(`(\[\^\d+\^|\[\^\d+|\[\^|\[)$`),
+			replace: FormattingReplaceRule{
+				match:   regexp.MustCompile(` ?\[\^(\d+)\^\]`),
+				replace: " [($1)][src$1]",
+			},
+		},
+		{
+			name:           "Word-Link-Ref",
+			forceWaitMatch: regexp.MustCompile(`(\]\(\^(\d+)\^|\]\(\^(\d+)|\]\(\^|\]\(|\])$`),
+			replace: FormattingReplaceRule{
+				match:   regexp.MustCompile(`\]\(\^(\d+)\^\)`),
+				replace: "][src$1]",
+			},
+		},
+	}
+)
+
+// Format deepleo messages and optionally also forcing a wait so things can be replaced cleanly
+func DeepLeoFormatting(msg string) (newMsg string, forceWait bool) {
+	for _, rule := range formattingRules {
+		if rule.forceWaitMatch.MatchString(msg) {
+			forceWait = true
+			continue
+		}
+
+		msg = rule.replace.match.ReplaceAllString(msg, rule.replace.replace)
+	}
+
+	return msg, forceWait
 }
