@@ -34,7 +34,8 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 	apiOutputCh := make(chan []byte)
 
 	// Options
-	options, err := ParseOptions(request.Messages)
+	options, newMessages, err := ParseOptions(request.Messages)
+	request.Messages = newMessages
 	if err != nil {
 		return
 	}
@@ -215,7 +216,7 @@ var (
 	optionSearchRegexp *regexp.Regexp = regexp.MustCompile(`(?i)(^|\n)/search (.+)$`)
 )
 
-func ParseOptions(messages []models.Message) (options types.Options, err error) {
+func ParseOptions(messages []models.Message) (options types.Options, newMessages []models.Message, err error) {
 	for _, message := range messages {
 		if strings.EqualFold(message.Role, "system") {
 			match := optionSearchRegexp.FindStringSubmatch(message.Content)
@@ -224,7 +225,13 @@ func ParseOptions(messages []models.Message) (options types.Options, err error) 
 				if err != nil {
 					return
 				}
+
+				message.Content = optionSearchRegexp.ReplaceAllString(message.Content, "")
+				message.Content = strings.Trim(message.Content, " \r\n\t")
 			}
+		}
+		if message.Content != "" {
+			newMessages = append(newMessages, message)
 		}
 	}
 	return
