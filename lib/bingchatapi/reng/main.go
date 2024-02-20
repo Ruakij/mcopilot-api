@@ -320,7 +320,7 @@ func (api RengApi) stream_generate(
 					// Stream ended
 					return
 				}
-				logger.Info.Printf("Received data messageType=%d err=%s count=%d\n", readResult.messageType, readResult.err, len(readResult.data))
+				//logger.Info.Printf("Received data messageType=%d err=%s count=%d\n", readResult.messageType, readResult.err, len(readResult.data))
 				if readResult.err != nil {
 					continue
 				}
