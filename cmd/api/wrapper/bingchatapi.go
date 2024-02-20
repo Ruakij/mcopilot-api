@@ -40,6 +40,12 @@ func (wrapper *BingChatWrapper) ProcessRequest(controllerContext context.Context
 		return
 	}
 
+	// Clean messages from generated content (source-attributions, search-info, ..)
+	for _, message := range request.Messages {
+		newMessage := filterMessage(message)
+		message.Content = newMessage.Content
+	}
+
 	wrapperContext, contextCancel := context.WithCancel(controllerContext)
 
 	// Build WorkItem
@@ -263,6 +269,21 @@ func ParseOptions(messages []models.Message) (options types.Options, newMessages
 		}
 	}
 	return
+}
+
+func filterMessage(message models.Message) models.Message {
+	// Filter some aspects to reduce halucinations and token-length
+	switch message.Role {
+	case "assistant", "bot":
+		message.Content = regexp.MustCompile(`(?s)\n\n\[src\d+\]: .+$`).ReplaceAllString(message.Content, "")
+		//message.Content = regexp.MustCompile(` ?\[\(\d+\)\]\[src\d+\]`).ReplaceAllString(message.Content, "")
+		message.Content = regexp.MustCompile(` ?\[(.+?)\]\[src\d+\]:.+(\n|$)`).ReplaceAllString(message.Content, "") // Might not be wanted?
+		message.Content = regexp.MustCompile(` ?\[(.+?)\]\[src\d+\]`).ReplaceAllString(message.Content, "")
+		message.Content = regexp.MustCompile(`^(- Search: .+\n\n)+`).ReplaceAllString(message.Content, "")
+		message.Content = regexp.MustCompile(`^\^\[\]\(BCN\)\n`).ReplaceAllString(message.Content, "")
+	}
+
+	return message
 }
 
 // Replace links to more-supported anchors
